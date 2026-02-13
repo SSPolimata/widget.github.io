@@ -118,18 +118,56 @@
     </div>
 
     <script>
-        
-        
-        // --- OPTIONAL USER METADATA ---
-        const USER_DATA = {
-            name: 'John Smith',   // e.g. 'John Doe'
-            email: 'john117@gmail.com',  // e.g. 'johndoe@gmail.com'
-            phone: '4271148009'   // e.g. '+1234567890'
+        // CONFIGURATION - Loaded externally
+        let CONFIG = {
+            SUPABASE_URL: '',
+            SUPABASE_ANON_KEY: '',
+            VF_API_KEY: '',
+            USER_DATA: {
+                name: '',
+                email: '',
+                phone: ''
+            }
         };
-        // ------------------------------
 
-        // Initialize Supabase correctly from CDN global
-        const _supabase = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+        let _supabase = null;
+        
+        // Helper to load config from .env or URL params
+        async function fetchExternalConfig() {
+            // 1. Try to fetch .env file locally
+            try {
+                const response = await fetch('.env');
+                if (response.ok) {
+                    const text = await response.text();
+                    text.split('\n').forEach(line => {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('#')) return;
+                        const [key, ...valueParts] = trimmed.split('=');
+                        const value = valueParts.join('=').trim().replace(/^["']|["']$/g, '');
+                        if (key === 'SUPABASE_URL') CONFIG.SUPABASE_URL = value;
+                        if (key === 'SUPABASE_ANON_KEY') CONFIG.SUPABASE_ANON_KEY = value;
+                        if (key === 'VF_API_KEY') CONFIG.VF_API_KEY = value;
+                        if (key === 'USER_NAME') CONFIG.USER_DATA.name = value;
+                        if (key === 'USER_EMAIL') CONFIG.USER_DATA.email = value;
+                        if (key === 'USER_PHONE') CONFIG.USER_DATA.phone = value;
+                    });
+                }
+            } catch (e) { console.log('No .env file found'); }
+
+            // 2. Override with URL parameters (useful for the loader script)
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('s_url')) CONFIG.SUPABASE_URL = params.get('s_url');
+            if (params.has('s_key')) CONFIG.SUPABASE_ANON_KEY = params.get('s_key');
+            if (params.has('vf_key')) CONFIG.VF_API_KEY = params.get('vf_key');
+            if (params.has('u_name')) CONFIG.USER_DATA.name = params.get('u_name');
+            if (params.has('u_email')) CONFIG.USER_DATA.email = params.get('u_email');
+            if (params.has('u_phone')) CONFIG.USER_DATA.phone = params.get('u_phone');
+
+            // 3. Initialize Supabase
+            if (CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY) {
+                _supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+            }
+        }
         
         // State
         let sessionId = localStorage.getItem('ez_chat_session_id');
@@ -179,7 +217,12 @@
 
         // 1. Manage Session
         async function initSession() {
-            if (!_supabase) return;
+            if (!_supabase) await fetchExternalConfig();
+            if (!_supabase) {
+                console.error('Supabase not initialized. Check your .env or query params.');
+                return;
+            }
+
             if (!sessionId) {
                 sessionId = crypto.randomUUID();
                 localStorage.setItem('ez_chat_session_id', sessionId);
@@ -197,9 +240,9 @@
                     .from('conversations')
                     .insert({
                         id: sessionId,
-                        user_name: USER_DATA.name || ('Visitor ' + sessionId.slice(0, 4)),
-                        user_email: USER_DATA.email || null,
-                        user_phone: USER_DATA.phone || null,
+                        user_name: CONFIG.USER_DATA.name || ('Visitor ' + sessionId.slice(0, 4)),
+                        user_email: CONFIG.USER_DATA.email || null,
+                        user_phone: CONFIG.USER_DATA.phone || null,
                         status: 'bot',
                         tags: ['new-visitor']
                     })
@@ -215,11 +258,11 @@
                 conversationId = data.id;
                 
                 // Optional: Update metadata if it changed in config
-                if (USER_DATA.name || USER_DATA.email || USER_DATA.phone) {
+                if (CONFIG.USER_DATA.name || CONFIG.USER_DATA.email || CONFIG.USER_DATA.phone) {
                     await _supabase.from('conversations').update({
-                        user_name: USER_DATA.name || data.user_name,
-                        user_email: USER_DATA.email || data.user_email,
-                        user_phone: USER_DATA.phone || data.user_phone,
+                        user_name: CONFIG.USER_DATA.name || data.user_name,
+                        user_email: CONFIG.USER_DATA.email || data.user_email,
+                        user_phone: CONFIG.USER_DATA.phone || data.user_phone,
                     }).eq('id', conversationId);
                 }
 
@@ -342,7 +385,7 @@
                 const response = await fetch(`https://general-runtime.voiceflow.com/state/user/${conversationId}/interact`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': VF_API_KEY,
+                        'Authorization': CONFIG.VF_API_KEY,
                         'Content-Type': 'application/json',
                         'versionID': 'development'
                     },
@@ -519,4 +562,3 @@
     </script>
 </body>
 </html>
-
