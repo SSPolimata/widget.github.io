@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EZ Chat Widget</title>
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes slideIn {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .chat-window {
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        .messages-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        .messages-container::-webkit-scrollbar-thumb {
+            background-color: #e5e7eb;
+            border-radius: 10px;
+        }
+        .bot-typing {
+            display: inline-flex;
+            gap: 2px;
+        }
+        .dot {
+            width: 4px;
+            height: 4px;
+            background: #9ca3af;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        /* Custom Brand Color */
+        .bg-brand { background-color: #C73842; }
+        .text-brand { color: #C73842; }
+        .border-brand { border-color: #C73842; }
+        .bg-brand-light { background-color: #fceced; }
+        .text-brand-light { color: #f28b93; }
+        .focus-ring-brand:focus { --tw-ring-color: rgba(199, 56, 66, 0.2); }
+    </style>
+</head>
+<body class="bg-transparent">
+    <!-- Chat Toggle Button -->
+    <div id="chat-toggle" class="fixed bottom-6 right-6 w-14 h-14 bg-brand rounded-full flex items-center justify-center cursor-pointer shadow-lg hover:opacity-90 transition-all hover:scale-110 z-50">
+        <i data-lucide="message-circle" class="text-white w-7 h-7"></i>
+    </div>
+
+    <!-- Chat Window (hidden by default) -->
+    <div id="chat-window" class="fixed bottom-4 right-[5%] w-[90%] sm:bottom-24 sm:right-6 sm:w-[380px] h-[70vh] sm:h-[550px] bg-white rounded-2xl flex flex-col hidden z-[9999] overflow-hidden border border-gray-100 shadow-2xl">
+        <!-- Header -->
+        <div class="p-4 bg-brand text-white flex items-center justify-between shadow-md relative z-10 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center p-1.5 shadow-sm">
+                    <img src="https://tse1.mm.bing.net/th/id/OIP.c11PRIARKEMEnx0QPCQ38gHaHa?rs=1&pid=ImgDetMain&o=7&rm=3" alt="Logo" class="w-full h-full object-contain" onerror="this.src='https://ui-avatars.com/api/?name=Ezra&background=fff&color=C73842'">
+                </div>
+                <div>
+                    <h3 class="font-bold text-sm tracking-tight">Ezra</h3>
+                    <div class="flex items-center gap-1.5">
+                        <span id="status-dot" class="w-2 h-2 bg-green-400 rounded-full shadow-[0_0_8px_rgba(74,222,128,0.5)]"></span>
+                        <span id="status-text" class="text-[10px] text-white/80 font-medium uppercase tracking-widest">Active</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-1">
+                <button id="close-chat" class="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Messages Area -->
+        <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 messages-container">
+            <!-- Welcome message will be injected here -->
+        </div>
+
+        <!-- Typing Indicator -->
+        <div id="typing-indicator" class="px-5 py-2 hidden">
+            <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-none px-4 py-3 inline-block shadow-sm">
+                <div class="bot-typing">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="p-4 bg-white border-t border-gray-100 relative z-20 pb-safe sm:pb-4">
+            <div class="relative flex items-center gap-2">
+                <button id="mic-button" class="p-2 text-gray-400 hover:text-brand transition-colors rounded-lg hover:bg-gray-50">
+                    <i data-lucide="mic" class="w-5 h-5"></i>
+                </button>
+                <input type="text" id="user-input" autocomplete="off" placeholder="Type your message..." class="w-full pl-2 pr-12 py-3 bg-gray-50 border border-none focus:outline-none text-sm placeholder:text-gray-400 text-gray-900 !opacity-100 selection:bg-red-100">
+                <button id="send-button" class="absolute right-1.5 bg-brand text-white p-2 rounded-lg hover:opacity-90 transition-all disabled:opacity-50">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                </button>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        // CONFIGURATION (The user should replace these)
+        const SUPABASE_URL = 'https://ndhrhlhamvncoztaorgv.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kaHJobGhhbXZuY296dGFvcmd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4MjE2NTYsImV4cCI6MjA4NDM5NzY1Nn0.mvsuS-N9gcSu7GarQqkaYF3J-C_UiAweIn5XSoeQCr8';
+        const VF_API_KEY = 'VF.DM.69308f440cb4afbbdf37fe87.wQTtg6lAKztzUepg'; 
+        
+        // --- OPTIONAL USER METADATA ---
+        const USER_DATA = {
+            name: 'John Smith',   // e.g. 'John Doe'
+            email: 'john117@gmail.com',  // e.g. 'johndoe@gmail.com'
+            phone: '4271148009'   // e.g. '+1234567890'
+        };
+        // ------------------------------
+
+        // Initialize Supabase correctly from CDN global
+        const _supabase = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+        
+        // State
+        let sessionId = localStorage.getItem('ez_chat_session_id');
+        let conversationId = null;
+        let isHandoff = false;
+        let isWindowOpen = false;
+        let recognition = null;
+
+        // Dom Elements
+        const toggleBtn = document.getElementById('chat-toggle');
+        const chatWindow = document.getElementById('chat-window');
+        const closeBtn = document.getElementById('close-chat');
+        const micBtn = document.getElementById('mic-button');
+        const messagesContainer = document.getElementById('messages-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-button');
+        const typingIndicator = document.getElementById('typing-indicator');
+
+        // Initial Setup
+        lucide.createIcons();
+
+        // Voice Recognition Setup
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'es-MX'; // Default to Spanish
+
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                userInput.value = text;
+                micBtn.classList.remove('text-red-500', 'animate-pulse');
+                sendMessage();
+            };
+
+            recognition.onerror = () => {
+                micBtn.classList.remove('text-red-500', 'animate-pulse');
+            };
+
+            recognition.onend = () => {
+                micBtn.classList.remove('text-red-500', 'animate-pulse');
+            };
+        } else {
+            micBtn.style.display = 'none';
+        }
+
+        // 1. Manage Session
+        async function initSession() {
+            if (!_supabase) return;
+            if (!sessionId) {
+                sessionId = crypto.randomUUID();
+                localStorage.setItem('ez_chat_session_id', sessionId);
+            }
+
+            // Check if conversation exists or create one
+            const { data, error } = await _supabase
+                .from('conversations')
+                .select('*')
+                .eq('id', sessionId) // We use the sessionId as the conversation UUID
+                .single();
+
+            if (!data) {
+                const { data: newConv } = await _supabase
+                    .from('conversations')
+                    .insert({
+                        id: sessionId,
+                        user_name: USER_DATA.name || ('Visitor ' + sessionId.slice(0, 4)),
+                        user_email: USER_DATA.email || null,
+                        user_phone: USER_DATA.phone || null,
+                        status: 'bot',
+                        tags: ['new-visitor']
+                    })
+                    .select()
+                    .single();
+                
+                conversationId = newConv.id;
+                isHandoff = false;
+                
+                // Trigger Voiceflow "launch" or first interact to get the welcome message
+                await getBotResponse(null); 
+            } else {
+                conversationId = data.id;
+                
+                // Optional: Update metadata if it changed in config
+                if (USER_DATA.name || USER_DATA.email || USER_DATA.phone) {
+                    await _supabase.from('conversations').update({
+                        user_name: USER_DATA.name || data.user_name,
+                        user_email: USER_DATA.email || data.user_email,
+                        user_phone: USER_DATA.phone || data.user_phone,
+                    }).eq('id', conversationId);
+                }
+
+                isHandoff = data.status !== 'bot';
+                updateStatusUI(data.status);
+                loadHistory();
+            }
+
+            subscribeToConversation();
+            // Subscribe to new messages from agent
+            subscribeToMessages();
+        }
+
+        function updateStatusUI(status) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            if (status === 'human') {
+                dot.className = 'w-2 h-2 bg-orange-400 rounded-full shadow-[0_0_8px_rgba(251,146,60,0.5)]';
+                text.innerText = 'Connected with Agent';
+                isHandoff = true;
+            } else if (status === 'bot') {
+                dot.className = 'w-2 h-2 bg-green-400 rounded-full shadow-[0_0_8px_rgba(74,222,128,0.5)]';
+                text.innerText = 'Online';
+                isHandoff = false;
+            }
+        }
+
+        async function loadHistory() {
+            const { data } = await _supabase
+                .from('messages')
+                .select('*')
+                .eq('conversation_id', conversationId)
+                .order('created_at', { ascending: true });
+            
+            if (data) {
+                messagesContainer.innerHTML = '';
+                data.forEach(m => {
+                    const isSystemMessage = m.text.includes('has joined the conversation');
+                    addMessage(m.role, m.text, false, isSystemMessage);
+                });
+                scrollToBottom();
+            }
+        }
+
+        function subscribeToConversation() {
+            _supabase
+                .channel('conv_status')
+                .on('postgres_changes', { 
+                    event: 'UPDATE', 
+                    schema: 'public', 
+                    table: 'conversations',
+                    filter: `id=eq.${conversationId}`
+                }, payload => {
+                    const newStatus = payload.new.status;
+                    
+                    // We now handle "Joined" messages via the messages table subscription
+                    // to avoid duplicates and ensure persistence.
+                    
+                    updateStatusUI(newStatus);
+                })
+                .subscribe();
+        }
+
+        function subscribeToMessages() {
+            _supabase
+                .channel('live_messages')
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'messages',
+                    filter: `conversation_id=eq.${conversationId}`
+                }, payload => {
+                    const msg = payload.new;
+                    
+                    // Don't echo back the user's own messages that are already in UI
+                    if (msg.role === 'user') return;
+
+                    // Prevent duplicate display of bot messages that were already added locally in getBotResponse
+                    const isDuplicate = Array.from(messagesContainer.children)
+                        .some(div => div.textContent?.includes(msg.text));
+                    
+                    if (!isDuplicate) {
+                        const isSystemMessage = msg.text.includes('has joined the conversation');
+                        addMessage(msg.role === 'agent' ? 'bot' : 'bot', msg.text, true, isSystemMessage);
+                    }
+                })
+                .subscribe();
+        }
+
+        // 2. Messaging Logic
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            userInput.value = '';
+            addMessage('user', text);
+            scrollToBottom();
+
+            // Store in Supabase
+            await _supabase.from('messages').insert({
+                conversation_id: conversationId,
+                role: 'user',
+                text: text
+            });
+
+            // If it's a bot session, call Voiceflow
+            if (!isHandoff) {
+                getBotResponse(text);
+            }
+        }
+
+        async function getBotResponse(text) {
+            showTyping(true);
+            try {
+                // If text is null, it's a launch/start event
+                const action = text 
+                    ? { type: 'text', payload: text }
+                    : { type: 'launch' };
+
+                const response = await fetch(`https://general-runtime.voiceflow.com/state/user/${conversationId}/interact`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': VF_API_KEY,
+                        'Content-Type': 'application/json',
+                        'versionID': 'development'
+                    },
+                    body: JSON.stringify({ action })
+                });
+
+                const responseData = await response.json();
+                showTyping(false);
+                console.log('Voiceflow Response:', responseData);
+
+                // Handle both: array of traces OR object with trace array
+                const traces = Array.isArray(responseData) ? responseData : (responseData.trace || []);
+
+                for (const trace of traces) {
+                    console.log('Processing trace:', trace.type, trace);
+                    
+                    if (trace.type === 'text' || trace.type === 'speak') {
+                        const botText = trace.payload.message || trace.payload.text;
+                        // Show immediately AND persist to DB
+                        addMessage('bot', botText);
+                        addBotMessageToDB(botText);
+                    } 
+                    
+                    // HEURISTIC: Check for any indication of handoff request
+                    const isHandoffAction = 
+                        trace.type === 'request_handoff' || 
+                        trace.payload?.action === 'request_handoff' ||
+                        trace.payload?.name === 'request_handoff' ||
+                        (trace.type === 'action' && (trace.payload?.name === 'request_handoff' || trace.payload?.action === 'request_handoff')) ||
+                        (trace.type === 'path' && trace.payload?.path === 'request_handoff');
+
+                    if (isHandoffAction) {
+                        console.log('MATCHED HANDOFF ACTION');
+                        await requestHandoffToSupabase();
+                    }
+                }
+            } catch (err) {
+                console.error('Error getting bot response:', err);
+                showTyping(false);
+            }
+        }
+
+        async function requestHandoffToSupabase() {
+            console.log('Handoff requested!');
+            
+            // Get current tags and add handoff-requested
+            const { data: conv } = await _supabase.from('conversations').select('tags').eq('id', conversationId).single();
+            let newTags = conv?.tags || [];
+            if (!newTags.includes('handoff-requested')) {
+                newTags.push('handoff-requested');
+            }
+
+            // Update conversation status to 'waiting' and add tag
+            await _supabase.from('conversations').update({
+                status: 'waiting',
+                last_message: '🕒 Handoff requested...',
+                last_update: new Date().toISOString(),
+                tags: newTags
+            }).eq('id', conversationId);
+
+            addMessage('bot', 'Connecting you with a human agent...', true, true);
+        }
+
+        async function addBotMessageToDB(text) {
+            // Update last message in conversation
+            await _supabase.from('conversations').update({
+                last_message: text,
+                last_update: new Date().toISOString()
+            }).eq('id', conversationId);
+
+            await _supabase.from('messages').insert({
+                conversation_id: conversationId,
+                role: 'bot',
+                text: text
+            });
+        }
+
+        function addMessage(role, text, animate = true, isInfo = false) {
+            const div = document.createElement('div');
+            
+            if (isInfo) {
+                div.className = 'flex justify-center';
+                div.innerHTML = `<span class="bg-brand-light text-brand text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider">${text}</span>`;
+            } else {
+                const isUser = role === 'user';
+                div.className = `flex ${isUser ? 'justify-end' : 'justify-start'}`;
+                
+                // Convert URLs to clickable links, avoiding trailing punctuation
+                const linkedText = text.replace(/(https?:\/\/[^\s]+)/g, (url) => {
+                    const cleanUrl = url.replace(/[.,!?;:]+$/, '');
+                    const trailing = url.substring(cleanUrl.length);
+                    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="underline decoration-2 underline-offset-2 hover:opacity-80 transition-opacity font-bold">${cleanUrl}</a>${trailing}`;
+                });
+
+                const inner = `
+                    <div class="max-w-[80%] px-4 py-2.5 rounded-2xl text-sm shadow-sm transition-all ${
+                        isUser 
+                        ? 'bg-brand text-white rounded-tr-none' 
+                        : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
+                    }">
+                        ${linkedText}
+                    </div>
+                `;
+                div.innerHTML = inner;
+            }
+
+            if (animate) div.style.animation = 'slideIn 0.3s ease-out';
+            messagesContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function showTyping(show) {
+            typingIndicator.classList.toggle('hidden', !show);
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            messagesContainer.scrollTo({
+                top: messagesContainer.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
+
+        // --- NEW: IFrame Communication ---
+        function notifyResize(open) {
+            if (window.parent) {
+                window.parent.postMessage({ type: 'ez-chat-resize', open: open }, '*');
+            }
+        }
+
+        // 3. UI Events
+        toggleBtn.onclick = () => {
+            isWindowOpen = !isWindowOpen;
+            chatWindow.classList.toggle('hidden');
+            if (isWindowOpen) {
+                initSession();
+                toggleBtn.innerHTML = '<i data-lucide="chevron-down" class="text-white w-7 h-7"></i>';
+                // Focus the input when window opens
+                setTimeout(() => userInput.focus(), 300);
+                notifyResize(true);
+            } else {
+                toggleBtn.innerHTML = '<i data-lucide="message-circle" class="text-white w-7 h-7"></i>';
+                notifyResize(false);
+            }
+            lucide.createIcons();
+        };
+
+        closeBtn.onclick = () => {
+            chatWindow.classList.add('hidden');
+            isWindowOpen = false;
+            toggleBtn.innerHTML = '<i data-lucide="message-circle" class="text-white w-7 h-7"></i>';
+            notifyResize(false);
+            lucide.createIcons();
+        };
+
+        micBtn.onclick = () => {
+            if (!recognition) return;
+            try {
+                micBtn.classList.add('text-red-500', 'animate-pulse');
+                recognition.start();
+            } catch (e) {
+                recognition.stop();
+            }
+        };
+
+        sendBtn.onclick = sendMessage;
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+    </script>
+</body>
+</html>
